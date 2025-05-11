@@ -129,7 +129,46 @@ class MetaOpt(nn.Module):
             self.gnn = GNNParams(2 if self.momentum is None else (in_features * max_kernel_size ** 2),
                                  d_hid,
                                  d_out,
-                                 "nn.gnn.PNA",
+                                 "src.nn.gnn.PNA",
+                                 gnn_kwargs=OmegaConf.create(dict(
+                                    in_channels=d_hid,
+                                    hidden_channels=d_hid,
+                                    num_layers=layers,
+                                    out_channels=d_hid,
+                                    aggregators=['mean', 'min', 'max', 'std'],
+                                    scalers=['identity', 'amplification'],
+                                    edge_dim=d_hid,
+                                    dropout=0.0,
+                                    norm="layernorm",
+                                    act="silu",
+                                    deg=None,
+                                    update_edge_attr=True,
+                                    modulate_edges=True,
+                                    gating_edges=False,
+                                 )),
+                                 layer_layout=layer_layout,
+                                 rev_edge_features=True,
+                                 num_probe_features=0,
+                                 zero_out_bias=False,
+                                 zero_out_weights=False,
+                                 bias_ln=False,
+                                 weight_ln=False,
+                                 sin_emb=False,
+                                 input_layers=1,
+                                 use_pos_embed=True,
+                                 out_scale=1.0 if gnn == 'pna_scale' else None,
+                                 wave_pos_embed=wave_pos_embed,
+                                 )
+            hid_dim += in_features
+
+        elif gnn.startswith('gps'):
+            print('layer_layout', layer_layout, gnn)
+            d_hid = hid_dim
+            d_out = hid_dim
+            self.gnn = GNNParams(2 if self.momentum is None else (in_features * max_kernel_size ** 2),
+                                 d_hid,
+                                 d_out,
+                                 "src.nn.gnn.GPS",
                                  gnn_kwargs=OmegaConf.create(dict(
                                     in_channels=d_hid,
                                     hidden_channels=d_hid,
@@ -486,7 +525,14 @@ def init_config(parser, steps=1000, inner_steps=None, log_interval=1):
                         help='Keep the gradients w.r.t. the parameters (in addition to the hidden states) '
                              'for the entire sequence. This behavior should be the same for meta-testing as well to '
                              'avoid the train/test mismatch and so perhaps this option is infeasible on large nets.')
-
+    # NOTE: ADDED BY LUCA
+    parser.add_argument('--random_inner_steps_after', type=int, default=0, 
+                        help='Start randomly sampling inner_steps after this number of outer steps (0 to disable)')
+    parser.add_argument('--random_inner_steps_min', type=float, default=0.25,
+                        help='Minimum factor for random inner steps (relative to set inner_steps)')
+    parser.add_argument('--random_inner_steps_max', type=float, default=3.0, 
+                        help='Maximum factor for random inner steps (relative to set inner_steps)')
+    
     print('\nEnvironment:')
     env = {}
     try:
@@ -561,7 +607,7 @@ if __name__ == "__main__":
 
     seed_everything(args.seed)
 
-    if args.gnn.startswith(('rt', 'pna', 'nfn')):
+    if args.gnn.startswith(('rt', 'pna', 'nfn', "gps")):
         train_cfg_ = TEST_TASKS[np.random.choice(args.train_tasks)]
         model, _, _ = init_model(train_cfg_, args)
         layer_layout = get_layout(model)
@@ -645,12 +691,26 @@ if __name__ == "__main__":
 
             model, hx, momentum = init_model(train_cfg, args)
             inner_steps_count = 0
+        
+        # NOTE: ADDED BY US
+        # Add randomized inner steps after specified number of steps
+        if args.random_inner_steps_after > 0 and outer_steps_count >= args.random_inner_steps_after:
+            # Save the original inner_steps value for reference
+            if not hasattr(args, 'orig_inner_steps'):
+                args.orig_inner_steps = inner_steps
+                
+            # Randomly sample inner_steps value between min and max factors
+            factor = np.random.uniform(args.random_inner_steps_min, args.random_inner_steps_max)
+            inner_steps = max(1, int(args.orig_inner_steps * factor))
+            print(f"Randomized inner_steps: {inner_steps} (factor: {factor:.2f})")
+
 
         if inner_steps > args.truncate > 0 and (outer_steps_count + 1) % args.truncate == 0:
             # reinitialize the hx, which should detach the gradient
             # however, the loss/gradients from the previous steps should still update the metaopt properly
             model, hx, momentum = init_model(train_cfg, args, model)
         # model.zero_grad()  # not needed since grads are detached in p.detach_() in the next lines
+        model = model.to(device)
         loss_inner = model().mean() if data is None else F.cross_entropy(model(data), target)
         loss_inner.backward(retain_graph=args.keep_grads)
 
