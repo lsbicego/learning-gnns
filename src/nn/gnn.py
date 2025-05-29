@@ -15,6 +15,8 @@ from torch.nn import Linear, ModuleList, Sequential
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+
+
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.nn.models.jumping_knowledge import JumpingKnowledge
 from torch_geometric.nn.resolver import (
@@ -33,6 +35,8 @@ from torch_geometric.utils import degree
 
 from src.nn.rt_transformer import GraphConstructor, create_object
 from src.nn.transformer_head import TransformerDecoder
+
+from src.nfn.layers.own_layers import GATConvEdge, GINEConvEdge, OwnGPSConv
 
 
 def to_pyg_batch(node_features, edge_features, edge_index):
@@ -113,6 +117,7 @@ class GNN(nn.Module):
     ):
         super().__init__()
         # self.rev_edge_features = rev_edge_features
+        self.lstm_gnn = None
         self.graph_features = graph_features
         self.nodes_per_layer = layer_layout
         self.layer_idx = torch.cumsum(torch.tensor([0] + layer_layout), dim=0)
@@ -398,6 +403,7 @@ class BasicGNN(torch.nn.Module):
         self.in_channels = in_channels
         self.hidden_channels = hidden_channels
         self.num_layers = num_layers
+        self.lstm_gnn = None
 
         self.dropout = dropout
         self.act = activation_resolver(act, **(act_kwargs or {}))
@@ -550,13 +556,26 @@ class BasicGNN(torch.nn.Module):
                     edge_weight = value
                 else:
                     edge_attr = value
-
+            
+            if self.lstm_gnn:
+                num_nodes = x.size(0)
+                h = x.new_zeros(num_nodes, self.convs[0].lstm.hidden_size)
+                c = x.new_zeros(num_nodes, self.convs[0].lstm.hidden_size)
             # Tracing the module is not allowed with *args and **kwargs :(
             # As such, we rely on a static solution to pass optional edge
             # weights and edge attributes to the module.
             if self.supports_edge_weight and self.supports_edge_attr:
                 x = self.convs[i](x, edge_index, edge_weight=edge_weight,
                                   edge_attr=edge_attr)
+            elif self.lstm_gnn:
+                x, (h, c) = self.convs[i](x, edge_index, edge_attr, state=(h, c))
+            elif self.own_convs:
+                print("Using own convs")
+                x, edge_attr = self.convs[i](x, edge_index, edge_attr=edge_attr)
+                print("Edge attr shape:", edge_attr.shape)
+                print(x)
+                print("X shape:", x.shape)
+
             elif self.supports_edge_weight:
                 x = self.convs[i](x, edge_index, edge_weight=edge_weight)
             elif self.supports_edge_attr:
@@ -689,7 +708,58 @@ class PNA(BasicGNN):
         return PNAConv(in_channels, out_channels, **kwargs)
     
 
-class GPS(BasicGNN):
+class PNA_LSTM(BasicGNN):
+    r"""The Graph Neural Network from the `"Principal Neighbourhood Aggregation
+    for Graph Nets" <https://arxiv.org/abs/2004.05718>`_ paper, using the
+    :class:`~torch_geometric.nn.conv.PNAConv` operator for message passing.
+
+    Args:
+        in_channels (int): Size of each input sample, or :obj:`-1` to derive
+            the size from the first input(s) to the forward method.
+        hidden_channels (int): Size of each hidden sample.
+        num_layers (int): Number of message passing layers.
+        out_channels (int, optional): If not set to :obj:`None`, will apply a
+            final linear transformation to convert hidden node embeddings to
+            output size :obj:`out_channels`. (default: :obj:`None`)
+        dropout (float, optional): Dropout probability. (default: :obj:`0.`)
+        act (str or Callable, optional): The non-linear activation function to
+            use. (default: :obj:`"relu"`)
+        act_first (bool, optional): If set to :obj:`True`, activation is
+            applied before normalization. (default: :obj:`False`)
+        act_kwargs (Dict[str, Any], optional): Arguments passed to the
+            respective activation function defined by :obj:`act`.
+            (default: :obj:`None`)
+        norm (str or Callable, optional): The normalization function to
+            use. (default: :obj:`None`)
+        norm_kwargs (Dict[str, Any], optional): Arguments passed to the
+            respective normalization function defined by :obj:`norm`.
+            (default: :obj:`None`)
+        jk (str, optional): The Jumping Knowledge mode. If specified, the model
+            will additionally apply a final linear transformation to transform
+            node embeddings to the expected output feature dimensionality.
+            (:obj:`None`, :obj:`"last"`, :obj:`"cat"`, :obj:`"max"`,
+            :obj:`"lstm"`). (default: :obj:`None`)
+        **kwargs (optional): Additional arguments of
+            :class:`torch_geometric.nn.conv.PNAConv`.
+    """
+    supports_edge_weight = False
+    supports_edge_attr = True
+    lstm_gnn = True
+
+    def init_conv(self, in_channels: int, out_channels: int,
+                  **kwargs) -> MessagePassing:
+        print("Using LSTM PNAConv")
+        print(kwargs)
+        self.lstm_gnn = True
+        return LSTMPNAConv(
+            in_channels=in_channels,
+            hidden_channels=out_channels,
+            out_channels=out_channels,
+            **kwargs,
+            )
+    
+    
+class GINE(BasicGNN):
     r"""The Graph Neural Network from the `"Principal Neighbourhood Aggregation
     for Graph Nets" <https://arxiv.org/abs/2004.05718>`_ paper, using the
     :class:`~torch_geometric.nn.conv.PNAConv` operator for message passing.
@@ -729,11 +799,128 @@ class GPS(BasicGNN):
     def init_conv(self, in_channels: int, out_channels: int,
                   **kwargs) -> MessagePassing:
         assert in_channels == out_channels, "GPSConv only supports in_channels == out_channels"
-        return GPSConv(channels=in_channels,
+        self.own_convs = True
+        node_nn = Sequential(
+                Linear(in_channels, out_channels),
+                activation_resolver(kwargs.get('act', 'relu'), **(kwargs.get('act_kwargs', {}) or {})),
+                Linear(out_channels, out_channels),
+            )
+        edge_nn = Sequential(
+                Linear(kwargs.get('edge_dim', in_channels), out_channels),
+                activation_resolver(kwargs.get('act', 'relu'), **(kwargs.get('act_kwargs', {}) or {})),
+                Linear(out_channels, out_channels),
+            )
+        return GINEConvEdge(
+            node_nn=node_nn,
+            edge_nn=edge_nn,
+            edge_dim=kwargs.get('edge_dim', None),
+            train_eps=kwargs.get('train_eps', False),
+            aggr=kwargs.get('aggr', 'add'),
+        )
+
+class GAT(BasicGNN):
+    r"""The Graph Neural Network from the `"Principal Neighbourhood Aggregation
+    for Graph Nets" <https://arxiv.org/abs/2004.05718>`_ paper, using the
+    :class:`~torch_geometric.nn.conv.PNAConv` operator for message passing.
+
+    Args:
+        in_channels (int): Size of each input sample, or :obj:`-1` to derive
+            the size from the first input(s) to the forward method.
+        hidden_channels (int): Size of each hidden sample.
+        num_layers (int): Number of message passing layers.
+        out_channels (int, optional): If not set to :obj:`None`, will apply a
+            final linear transformation to convert hidden node embeddings to
+            output size :obj:`out_channels`. (default: :obj:`None`)
+        dropout (float, optional): Dropout probability. (default: :obj:`0.`)
+        act (str or Callable, optional): The non-linear activation function to
+            use. (default: :obj:`"relu"`)
+        act_first (bool, optional): If set to :obj:`True`, activation is
+            applied before normalization. (default: :obj:`False`)
+        act_kwargs (Dict[str, Any], optional): Arguments passed to the
+            respective activation function defined by :obj:`act`.
+            (default: :obj:`None`)
+        norm (str or Callable, optional): The normalization function to
+            use. (default: :obj:`None`)
+        norm_kwargs (Dict[str, Any], optional): Arguments passed to the
+            respective normalization function defined by :obj:`norm`.
+            (default: :obj:`None`)
+        jk (str, optional): The Jumping Knowledge mode. If specified, the model
+            will additionally apply a final linear transformation to transform
+            node embeddings to the expected output feature dimensionality.
+            (:obj:`None`, :obj:`"last"`, :obj:`"cat"`, :obj:`"max"`,
+            :obj:`"lstm"`). (default: :obj:`None`)
+        **kwargs (optional): Additional arguments of
+            :class:`torch_geometric.nn.conv.PNAConv`.
+    """
+    supports_edge_weight = False
+    supports_edge_attr = True
+
+    def init_conv(self, in_channels: int, out_channels: int,
+                  **kwargs) -> MessagePassing:
+        assert in_channels == out_channels, "GPSConv only supports in_channels == out_channels"
+        self.own_convs = False
+        edge_nn = Sequential(
+                Linear(kwargs.get('edge_dim', in_channels), out_channels),
+                activation_resolver(kwargs.get('act', 'relu'), **(kwargs.get('act_kwargs', {}) or {})),
+                Linear(out_channels, out_channels),
+            )
+        return GATConv(in_channels=in_channels,
+                       out_channels=out_channels,
+                       )
+        return GATConvEdge(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            edge_nn=edge_nn,
+            heads=kwargs.get('heads', 1),
+        )
+
+class GPS(BasicGNN):
+    r"""The Graph Neural Network from the `"Principal Neighbourhood Aggregation
+    for Graph Nets" <https://arxiv.org/abs/2004.05718>`_ paper, using the
+    :class:`~torch_geometric.nn.conv.PNAConv` operator for message passing.
+
+    Args:
+        in_channels (int): Size of each input sample, or :obj:`-1` to derive
+            the size from the first input(s) to the forward method.
+        hidden_channels (int): Size of each hidden sample.
+        num_layers (int): Number of message passing layers.
+        out_channels (int, optional): If not set to :obj:`None`, will apply a
+            final linear transformation to convert hidden node embeddings to
+            output size :obj:`out_channels`. (default: :obj:`None`)
+        dropout (float, optional): Dropout probability. (default: :obj:`0.`)
+        act (str or Callable, optional): The non-linear activation function to
+            use. (default: :obj:`"relu"`)
+        act_first (bool, optional): If set to :obj:`True`, activation is
+            applied before normalization. (default: :obj:`False`)
+        act_kwargs (Dict[str, Any], optional): Arguments passed to the
+            respective activation function defined by :obj:`act`.
+            (default: :obj:`None`)
+        norm (str or Callable, optional): The normalization function to
+            use. (default: :obj:`None`)
+        norm_kwargs (Dict[str, Any], optional): Arguments passed to the
+            respective normalization function defined by :obj:`norm`.
+            (default: :obj:`None`)
+        jk (str, optional): The Jumping Knowledge mode. If specified, the model
+            will additionally apply a final linear transformation to transform
+            node embeddings to the expected output feature dimensionality.
+            (:obj:`None`, :obj:`"last"`, :obj:`"cat"`, :obj:`"max"`,
+            :obj:`"lstm"`). (default: :obj:`None`)
+        **kwargs (optional): Additional arguments of
+            :class:`torch_geometric.nn.conv.PNAConv`.
+    """
+    supports_edge_weight = False
+    supports_edge_attr = True
+
+
+    def init_conv(self, in_channels: int, out_channels: int,
+                  **kwargs) -> MessagePassing:
+        assert in_channels == out_channels, "GPSConv only supports in_channels == out_channels"
+        self.own_convs = False
+        return OwnGPSConv(channels=in_channels,
                        conv=PNAConv(in_channels=in_channels, 
                                     out_channels=out_channels, **kwargs),
                        heads=1,
-                       attn_type="performer", 
+                       attn_type="RT", 
                        )
     
 
@@ -979,3 +1166,87 @@ class EdgeMLP(nn.Module):
         # return self.norm(edge_attr + h)
 
 
+
+from torch.nn import LSTMCell
+
+class LSTMPNAConv(nn.Module):
+    r"""
+    A layer that does:
+
+      1) (h, c) ← LSTMCell(x, (h, c))
+      2) out_node ← PNAConv(h, edge_index, edge_attr)
+
+    Maintains a hidden and cell state per node.
+    """
+    def __init__(
+        self,
+        in_channels: int,
+        hidden_channels: int,
+        out_channels: int,
+        aggregators: list,
+        scalers: list,
+        deg: Tensor,
+        edge_dim: int = None,
+        towers: int = 1,
+        pre_layers: int = 1,
+        post_layers: int = 1,
+        divide_input: bool = False,
+        act: str = "relu",
+        act_kwargs: dict = None,
+        train_norm: bool = False,
+        **pna_kwargs,
+    ):
+        super().__init__()
+        # step 1: per-node LSTM
+        self.lstm = LSTMCell(in_channels, hidden_channels)
+
+        # step 2: graph conv on the hidden state
+        self.pna = PNAConv(
+            in_channels=hidden_channels,
+            out_channels=out_channels,
+            aggregators=aggregators,
+            scalers=scalers,
+            deg=deg,
+            edge_dim=edge_dim,
+            towers=towers,
+            pre_layers=pre_layers,
+            post_layers=post_layers,
+            divide_input=divide_input,
+            act=act,
+            act_kwargs=act_kwargs,
+            train_norm=train_norm,
+            **pna_kwargs,
+        )
+
+    def forward(
+        self,
+        x: Tensor,
+        edge_index: Adj,
+        edge_attr: OptTensor = None,
+        state: tuple = None,
+    ) -> tuple:
+        """
+        Args:
+            x:        [num_nodes, in_channels]
+            edge_index, edge_attr: as in PNAConv
+            state:    (h, c) each [num_nodes, hidden_channels], or None to init zeros
+
+        Returns:
+            out:      [num_nodes, out_channels]  (PNA update on h)
+            state:    (h, c)  updated LSTM states
+        """
+        num_nodes = x.size(0)
+        # initialize if needed
+        if state is None:
+            h = x.new_zeros(num_nodes, self.lstm.hidden_size)
+            c = x.new_zeros(num_nodes, self.lstm.hidden_size)
+        else:
+            h, c = state
+
+        # 1) LSTM step (applied identically per node)
+        h, c = self.lstm(x, (h, c))
+
+        # 2) Graph update on the hidden states
+        out = self.pna(h, edge_index, edge_attr)
+
+        return out, (h, c)

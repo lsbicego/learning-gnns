@@ -122,6 +122,124 @@ class MetaOpt(nn.Module):
                                      wave_pos_embed=wave_pos_embed,
                                      graph_features='weights')
             hid_dim += in_features
+
+        elif gnn == "PNA_LSTM":
+            print('layer_layout', layer_layout, gnn)
+            d_hid = hid_dim
+            d_out = hid_dim
+            self.gnn = GNNParams(2 if self.momentum is None else (in_features * max_kernel_size ** 2),
+                                 d_hid,
+                                 d_out,
+                                 "src.nn.gnn.PNA_LSTM",
+                                 gnn_kwargs=OmegaConf.create(dict(
+                                    in_channels=d_hid,
+                                    hidden_channels=d_hid,
+                                    num_layers=layers,
+                                    out_channels=d_hid,
+                                    aggregators=['mean', 'min', 'max', 'std'],
+                                    scalers=['identity', 'amplification'],
+                                    edge_dim=d_hid,
+                                    dropout=0.0,
+                                    norm="layernorm",
+                                    act="silu",
+                                    deg=None,
+                                    update_edge_attr=True,
+                                    modulate_edges=True,
+                                    gating_edges=False,
+                                 )),
+                                 layer_layout=layer_layout,
+                                 rev_edge_features=True,
+                                 num_probe_features=0,
+                                 zero_out_bias=False,
+                                 zero_out_weights=False,
+                                 bias_ln=False,
+                                 weight_ln=False,
+                                 sin_emb=False,
+                                 input_layers=1,
+                                 use_pos_embed=True,
+                                 out_scale=1.0 if gnn == 'pna_scale' else None,
+                                 wave_pos_embed=wave_pos_embed,
+                                 )
+            hid_dim += in_features
+        
+        
+        elif gnn == "GINE":
+            print('layer_layout', layer_layout, gnn)
+            d_hid = hid_dim
+            d_out = hid_dim
+            self.gnn = GNNParams(2 if self.momentum is None else (in_features * max_kernel_size ** 2),
+                                 d_hid,
+                                 d_out,
+                                 "src.nn.gnn.GINE",
+                                 gnn_kwargs=OmegaConf.create(dict(
+                                    in_channels=d_hid,
+                                    hidden_channels=d_hid,
+                                    num_layers=layers,
+                                    out_channels=d_hid,
+                                    aggregators=['mean', 'min', 'max', 'std'],
+                                    scalers=['identity', 'amplification'],
+                                    edge_dim=d_hid,
+                                    dropout=0.0,
+                                    norm="layernorm",
+                                    act="silu",
+                                    deg=None,
+                                    update_edge_attr=True,
+                                    modulate_edges=True,
+                                    gating_edges=False,
+                                 )),
+                                 layer_layout=layer_layout,
+                                 rev_edge_features=True,
+                                 num_probe_features=0,
+                                 zero_out_bias=False,
+                                 zero_out_weights=False,
+                                 bias_ln=False,
+                                 weight_ln=False,
+                                 sin_emb=False,
+                                 input_layers=1,
+                                 use_pos_embed=True,
+                                 out_scale=1.0 if gnn == 'pna_scale' else None,
+                                 wave_pos_embed=wave_pos_embed,
+                                 )
+            hid_dim += in_features
+
+        elif gnn == "GAT":
+            print('layer_layout', layer_layout, gnn)
+            d_hid = hid_dim
+            d_out = hid_dim
+            self.gnn = GNNParams(2 if self.momentum is None else (in_features * max_kernel_size ** 2),
+                                 d_hid,
+                                 d_out,
+                                 "src.nn.gnn.GAT",
+                                 gnn_kwargs=OmegaConf.create(dict(
+                                    in_channels=d_hid,
+                                    hidden_channels=d_hid,
+                                    num_layers=layers,
+                                    out_channels=d_hid,
+                                    aggregators=['mean', 'min', 'max', 'std'],
+                                    scalers=['identity', 'amplification'],
+                                    edge_dim=d_hid,
+                                    dropout=0.0,
+                                    norm="layernorm",
+                                    act="silu",
+                                    deg=None,
+                                    update_edge_attr=True,
+                                    modulate_edges=True,
+                                    gating_edges=False,
+                                 )),
+                                 layer_layout=layer_layout,
+                                 rev_edge_features=True,
+                                 num_probe_features=0,
+                                 zero_out_bias=False,
+                                 zero_out_weights=False,
+                                 bias_ln=False,
+                                 weight_ln=False,
+                                 sin_emb=False,
+                                 input_layers=1,
+                                 use_pos_embed=True,
+                                 out_scale=1.0 if gnn == 'pna_scale' else None,
+                                 wave_pos_embed=wave_pos_embed,
+                                 )
+            hid_dim += in_features
         elif gnn.startswith('pna'):
             print('layer_layout', layer_layout, gnn)
             d_hid = hid_dim
@@ -607,7 +725,7 @@ if __name__ == "__main__":
 
     seed_everything(args.seed)
 
-    if args.gnn.startswith(('rt', 'pna', 'nfn', "gps")):
+    if args.gnn.startswith(('rt', 'pna', 'nfn', "gps")) or args.gnn in ["PNA_LSTM", "GINE", "GAT"]:
         train_cfg_ = TEST_TASKS[np.random.choice(args.train_tasks)]
         model, _, _ = init_model(train_cfg_, args)
         layer_layout = get_layout(model)
