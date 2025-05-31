@@ -983,7 +983,19 @@ if __name__ == "__main__":
 
             if data is not None:
                 print('\nEval MetaOpt, task:', TEST_TASKS[args.train_tasks[0]])
-                eval_meta_opt(metaopt, TEST_TASKS[args.train_tasks[0]], TEST_SEEDS[0], args, device, print_interval=1)
+                final_test_acc = eval_meta_opt(metaopt, TEST_TASKS[args.train_tasks[0]], TEST_SEEDS[0], args, device, print_interval=1)
+                if final_test_acc > best_test_acc:
+                    best_test_acc = final_test_acc
+                    print('Best test accuracy so far: {:.2f}'.format(best_test_acc))
+                    # Save the best model
+                    best_model_path = os.path.join(save_dir, "best_model.pt")
+                    torch.save({
+                        "model_state_dict": metaopt.state_dict(),
+                        "config": args,
+                        "metaopt_cfg": metaopt_cfg
+                    }, best_model_path)
+                    print('Best model saved to', best_model_path)
+                # Implement best model saving
 
         inner_steps_count += 1
         if outer_upd:
