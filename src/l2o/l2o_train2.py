@@ -985,7 +985,7 @@ if __name__ == "__main__":
                 print('\nEval MetaOpt, task:', TEST_TASKS[args.train_tasks[0]])
                 final_test_acc = eval_meta_opt(metaopt, TEST_TASKS[args.train_tasks[0]], TEST_SEEDS[0], args, device, print_interval=1)
                 if final_test_acc[-1] > best_test_acc: # compare last test accuracy
-                    best_test_acc = final_test_acc
+                    best_test_acc = final_test_acc[-1]
                     print('Best test accuracy so far: {:.2f}'.format(best_test_acc))
                     # Save the best model
                     best_model_path = os.path.join(save_dir, "best_model.pt")
