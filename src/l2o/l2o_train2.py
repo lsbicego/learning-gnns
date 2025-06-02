@@ -673,6 +673,86 @@ def eval_meta_opt2(meta_opt, test_cfg, seed, args, device, print_interval=20, st
     return acc_trace
 
 
+
+def eval_meta_opt_last_only(meta_opt, test_cfg, seed, args, device, print_interval=20, steps=None, amp=False):
+    seed_everything(seed)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    net, hx_, momentum_ = init_model(test_cfg, args)
+    if isinstance(meta_opt, nn.Module):
+        meta_opt.eval()
+    else:
+        # SGD, Adam, AdamW, etc.
+        net.train()
+        meta_opt = meta_opt(net.parameters())
+
+    t = time.time()
+    max_iters = test_cfg['max_iters'] if steps is None else steps
+    train_loader = trainloader_mapping[test_cfg["dataset"]]()
+    epochs = int(np.ceil(max_iters / len(train_loader)))
+    step = 0
+    for epoch in range(epochs):
+        for _, (x, y) in enumerate(train_loader):
+            # net.zero_grad()  # not needed since grads are detached in set_model_params in the next lines
+            output = net(x.to(device))
+            y = y.to(device)
+            loss = F.cross_entropy(output, y)
+
+            loss.backward(retain_graph=args.keep_grads)
+
+            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            acc = pred.eq(y.view_as(pred)).sum() / len(y)
+
+            if isinstance(meta_opt, nn.Module):
+                with torch.set_grad_enabled(args.keep_grads):
+                    with torch.amp.autocast(enabled=amp, device_type=device):  # use amp to reduce memory usage
+                        predicted_upd, hx_, momentum_ = meta_opt(net, hx=hx_, momentum=momentum_)
+                    set_model_params(net, predicted_upd, keep_grad=args.keep_grads, retain_graph=args.keep_grads)
+
+            else:
+                # SGD, Adam, AdamW, etc.
+                meta_opt.step()
+                meta_opt.zero_grad()
+
+            if (step + 1) % min(100, args.inner_steps) == 0 and step < max_iters - 1:
+                test_acc_, test_loss_ = test_model(net, device, testloader_mapping[test_cfg["dataset"]]())
+                print('test_acc_/test_loss_', test_acc_, test_loss_)
+
+                # reset hidden states and momentum (but not the model/net) to align with the training regime
+                # not sure it is needed in the current version, but was important in some preliminary experiments
+                # Observation: interestingly, this reset does not change the results significantly
+                if (step + 1) % args.inner_steps == 0:
+                    net, hx_, momentum_ = init_model(test_cfg, args, net)
+
+            if (step + 1) % print_interval == 0 or step == max_iters - 1:
+                r = process.memory_info().rss / 10 ** 9
+                g = -1 if device == 'cpu' else (torch.cuda.memory_reserved(0) / 10 ** 9)
+                print('Training {} net: seed={}, step={:05d}/{:05d}, train loss={:.3f}, acc={:.3f}, '
+                      'speed: {:.2f} s/b, mem ram/gpu: {:.2f}/{:.2f}G'.format(test_cfg['name'],
+                                                                              seed,
+                                                                              step + 1,
+                                                                              max_iters,
+                                                                              loss.item(),
+                                                                              acc.item(),
+                                                                              (time.time() - t) / (step + 1),
+                                                                              r,
+                                                                              g))
+            step += 1
+            if step >= max_iters:
+                break
+        if step >= max_iters:
+            break
+
+    test_acc_, test_loss_ = test_model(net, device, testloader_mapping[test_cfg["dataset"]]())
+    print("seed: {}, test accuracy: {:.2f}, test loss: {:.4f}\n".format(seed,
+                                                                        test_acc_,
+                                                                        test_loss_))
+
+    return test_acc_
+
+
+
 def init_config(parser, steps=1000, inner_steps=None, log_interval=1):
 
     print('starting at', datetime.today())
@@ -983,9 +1063,9 @@ if __name__ == "__main__":
 
             if data is not None:
                 print('\nEval MetaOpt, task:', TEST_TASKS[args.train_tasks[0]])
-                final_test_acc = eval_meta_opt(metaopt, TEST_TASKS[args.train_tasks[0]], TEST_SEEDS[0], args, device, print_interval=1)
-                if final_test_acc[-1] > best_test_acc: # compare last test accuracy
-                    best_test_acc = final_test_acc[-1]
+                final_test_acc = eval_meta_opt_last_only(metaopt, TEST_TASKS[args.train_tasks[0]], TEST_SEEDS[0], args, device, print_interval=1)
+                if final_test_acc > best_test_acc: # compare last test accuracy
+                    best_test_acc = final_test_acc
                     print('Best test accuracy so far: {:.2f}'.format(best_test_acc))
                     # Save the best model
                     best_model_path = os.path.join(save_dir, "best_model.pt")
