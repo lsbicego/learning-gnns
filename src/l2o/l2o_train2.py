@@ -760,7 +760,7 @@ def init_config(parser, steps=1000, inner_steps=None, log_interval=1):
 
 
 if __name__ == "__main__":
-
+    best_test_acc = 0.0
     parser = argparse.ArgumentParser(description='l2o training')
     # Meta-training arguments
 
@@ -984,7 +984,7 @@ if __name__ == "__main__":
             if data is not None:
                 print('\nEval MetaOpt, task:', TEST_TASKS[args.train_tasks[0]])
                 final_test_acc = eval_meta_opt(metaopt, TEST_TASKS[args.train_tasks[0]], TEST_SEEDS[0], args, device, print_interval=1)
-                if final_test_acc > best_test_acc:
+                if final_test_acc[-1] > best_test_acc: # compare last test accuracy
                     best_test_acc = final_test_acc
                     print('Best test accuracy so far: {:.2f}'.format(best_test_acc))
                     # Save the best model

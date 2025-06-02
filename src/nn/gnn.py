@@ -404,6 +404,7 @@ class BasicGNN(torch.nn.Module):
         self.hidden_channels = hidden_channels
         self.num_layers = num_layers
         self.lstm_gnn = None
+        self.own_convs = None
 
         self.dropout = dropout
         self.act = activation_resolver(act, **(act_kwargs or {}))
