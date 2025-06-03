@@ -486,7 +486,7 @@ def _tokenize_dataset(split: str):
     
     return dataset.map(tokenize_fn, batched=True)
 
-def _create_dataloader(tokenized_dataset, batch_size=32):
+def _create_dataloader(tokenized_dataset, train, batch_size=32):
     """Convert tokenized dataset to DataLoader"""
     def collate_fn(batch):
         return {
@@ -498,17 +498,17 @@ def _create_dataloader(tokenized_dataset, batch_size=32):
     return DataLoader(
         tokenized_dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=train,
         collate_fn=collate_fn,
         pin_memory=torch.cuda.is_available(),
         num_workers=4
     )
 
 def imdb_trainloader():
-    return _create_dataloader(_tokenize_dataset('train'))
+    return _create_dataloader(_tokenize_dataset('train'), True)
 
 def imdb_testloader():
-    return _create_dataloader(_tokenize_dataset('test'))
+    return _create_dataloader(_tokenize_dataset('test'), False)
 
 
 trainloader_mapping = {
