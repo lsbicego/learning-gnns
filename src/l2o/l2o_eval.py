@@ -61,8 +61,8 @@ if __name__ == "__main__":
             print('init metaopt_cfg from cmd args', metaopt_cfg)
         metaopt = MetaOpt(**metaopt_cfg).to(device).eval()
         metaopt.load_state_dict(state_dict['model_state_dict'])
-        print('MetaOpt with %d params' % sum([p.numel() for p in metaopt.parameters()]),
-              'loaded from step %d' % state_dict['step'])
+        #print('MetaOpt with %d params' % sum([p.numel() for p in metaopt.parameters()]),
+        #      'loaded from step %d' % state_dict['step'])
 
     for task in args.train_tasks:
         cgf = TEST_TASKS[task]

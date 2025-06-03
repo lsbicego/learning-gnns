@@ -623,15 +623,23 @@ def eval_meta_opt2(meta_opt, test_cfg, seed, args, device, print_interval=20, st
     acc_trace = []  # <<< NEW: list to store test accuracy over time
 
     for epoch in range(epochs):
-        for _, (x, y) in enumerate(train_loader):
-            output = net(x.to(device))
-            y = y.to(device)
-            loss = F.cross_entropy(output, y)
+        for _, batch in enumerate(train_loader):
+            if isinstance(batch, dict):
+                x = batch['input_ids']
+                y = batch['labels']
+                output = net(x.to(device))
+                y = y.to(device)
+                loss = F.binary_cross_entropy(output, y.float())
+                acc = ((output > 0.5) == y.bool()).float().mean()
+            else:
+                x, y = batch
+                output = net(x.to(device))
+                y = y.to(device)
+                loss = F.cross_entropy(output, y)
+                pred = output.argmax(dim=1, keepdim=True)
+                acc = pred.eq(y.view_as(pred)).sum() / len(y)
 
             loss.backward(retain_graph=args.keep_grads)
-
-            pred = output.argmax(dim=1, keepdim=True)
-            acc = pred.eq(y.view_as(pred)).sum() / len(y)
 
             if isinstance(meta_opt, nn.Module):
                 with torch.set_grad_enabled(args.keep_grads):

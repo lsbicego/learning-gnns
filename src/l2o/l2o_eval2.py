@@ -6,8 +6,8 @@ Evaluation on CIFAR-10-conv (task 11, see l2o_utils.py) can be run as:
 """
 
 from functools import partial
-from .l2o_utils import *
-from .l2o_train import MetaOpt, eval_meta_opt, init_config, eval_meta_opt2
+from l2o_utils import *
+from l2o_train2 import MetaOpt, eval_meta_opt, init_config, eval_meta_opt2
 import csv
 import os
 import numpy as np
@@ -63,8 +63,8 @@ if __name__ == "__main__":
             print('init metaopt_cfg from cmd args', metaopt_cfg)
         metaopt = MetaOpt(**metaopt_cfg).to(device).eval()
         metaopt.load_state_dict(state_dict['model_state_dict'])
-        print('MetaOpt with %d params' % sum([p.numel() for p in metaopt.parameters()]),
-              'loaded from step %d' % state_dict['step'])
+        #print('MetaOpt with %d params' % sum([p.numel() for p in metaopt.parameters()]),
+        #      'loaded from step %d' % state_dict['step'])
 
     # <<< NEW: Create directory for all results files
     os.makedirs("eval_results", exist_ok=True)

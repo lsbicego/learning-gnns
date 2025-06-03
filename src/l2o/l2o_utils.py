@@ -18,6 +18,11 @@ from itertools import chain
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
 
+from datasets import load_dataset
+from torch.utils.data import DataLoader
+from transformers import AutoTokenizer
+from functools import lru_cache
+
 
 def seed_everything(seed):
     random.seed(seed)
@@ -33,14 +38,24 @@ def test_model(model, device, test_loader):
     correct = 0
     # metrics = {}
     with torch.no_grad():
-        for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            test_loss += F.cross_entropy(
-                output, target, reduction="sum"
-            ).item()  # sum up batch loss
-            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            correct += pred.eq(target.view_as(pred)).sum().item()
+        for _, batch in enumerate(test_loader):
+            if isinstance(batch, dict):
+                data = batch['input_ids'].to(device)
+                target = batch['labels'].to(device)
+                output = model(data)
+                test_loss += F.binary_cross_entropy(
+            	    output, target.float(), reduction="sum"
+            	  ).item()
+                correct += ((output > 0.5) == target.bool()).float().sum().item()
+            else:
+                data, target = batch
+                data, target = data.to(device), target.to(device)
+                output = model(data)
+                test_loss += F.cross_entropy(
+                    output, target, reduction="sum"
+                ).item()  # sum up batch loss
+                pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+                correct += pred.eq(target.view_as(pred)).sum().item()
 
     test_loss /= len(test_loader.dataset)
     test_acc = 100.0 * correct / len(test_loader.dataset)
@@ -310,6 +325,23 @@ class NetMNIST(nn.Module):
         if isinstance(self.fc[0], nn.Linear):
             x = x.view(len(x), -1)
         return self.fc(x)
+        
+class SentimentTransformer(nn.Module):
+    def __init__(self, embed_dim, hidden_dim, n_layers):
+        super().__init__()
+        self.embed = nn.Embedding(30522, embed_dim)
+        self.pos_embed = nn.Embedding(512, embed_dim)  # Max sequence length of 512
+        encoder_layer = nn.TransformerEncoderLayer(embed_dim, nhead=4, dim_feedforward=hidden_dim)
+        self.transformer = nn.TransformerEncoder(encoder_layer, n_layers)
+        self.fc = nn.Linear(embed_dim, 1)
+    
+    def forward(self, x):
+        x = x[:, :512]
+        positions = torch.arange(x.size(1), device=x.device).unsqueeze(0)
+        x = self.embed(x) + self.pos_embed(positions)
+        x = self.transformer(x)
+        x = x.mean(dim=1) 
+        return torch.sigmoid(self.fc(x)).squeeze()
 
 
 def mnist28_trainloader(im_size=28):
@@ -435,6 +467,48 @@ def cifar10_testloader():
         shuffle=True,
     )
     return loader
+    
+    
+    
+@lru_cache(maxsize=2)  # Cache both train and test tokenizations
+def _tokenize_dataset(split: str):
+    """Tokenize and cache dataset split"""
+    dataset = load_dataset('imdb', split=split)
+    
+    def tokenize_fn(examples):
+        return AutoTokenizer.from_pretrained('bert-base-uncased')(
+            examples['text'],
+            truncation=True,
+            padding='max_length',
+            max_length=512,
+            return_tensors='pt'
+        )
+    
+    return dataset.map(tokenize_fn, batched=True)
+
+def _create_dataloader(tokenized_dataset, batch_size=32):
+    """Convert tokenized dataset to DataLoader"""
+    def collate_fn(batch):
+        return {
+            'input_ids': torch.stack([torch.tensor(x['input_ids']) for x in batch]),
+            'attention_mask': torch.stack([torch.tensor(x['attention_mask']) for x in batch]),
+            'labels': torch.tensor([x['label'] for x in batch])
+        }
+    
+    return DataLoader(
+        tokenized_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        pin_memory=torch.cuda.is_available(),
+        num_workers=4
+    )
+
+def imdb_trainloader():
+    return _create_dataloader(_tokenize_dataset('train'))
+
+def imdb_testloader():
+    return _create_dataloader(_tokenize_dataset('test'))
 
 
 trainloader_mapping = {
@@ -443,6 +517,7 @@ trainloader_mapping = {
     "mnist8": partial(mnist28_trainloader, im_size=8),
     "fashionmnist": fashionmnist28_trainloader,
     "cifar10": cifar10_trainloader,
+    "imdb": imdb_trainloader
 }
 
 testloader_mapping = {
@@ -451,6 +526,7 @@ testloader_mapping = {
     "mnist8": partial(mnist28_testloader, im_size=8),
     "fashionmnist": fashionmnist28_testloader,
     "cifar10": cifar10_testloader,
+    "imdb": imdb_testloader
 }
 
 
@@ -539,6 +615,19 @@ TEST_TASKS = [
             "max_iters": 100,
             "name": "convnet_fashionmnist"
         },
+        
+        #18 Language modeling
+        {
+            "net_args": {
+                "embed_dim": 128,
+                "hidden_dim": 256,
+                "n_layers": 2
+            },
+            "net_cls": SentimentTransformer,
+            "dataset": "imdb",
+            "max_iters": 200,
+            "name": "sentiment_analysis"
+        }
     ]
 
 TEST_SEEDS = [101, 102, 103, 104, 105]
