@@ -861,7 +861,7 @@ if __name__ == "__main__":
     args, device = init_config(parser, steps=1000, inner_steps=100, log_interval=100)
 
     rnn = args.model.lower() == 'lstm'
-    save_dir = 'results/l2o_{}{}_{}{}_{}_lr{:.6f}_wd{:.6f}_mom{:.2f}_hid{}_layers{}_iters{}_innersteps{}{}{}{}'.format(
+    save_dir = 'results/l2o_{}{}_{}{}_{}_lr{:.6f}_wd{:.6f}_mom{:.2f}_hid{}_layers{}_iters{}_innersteps{}{}{}{}randomsteps{}'.format(
         TEST_TASKS[args.train_tasks[0]]["dataset"],
         args.train_tasks[0],
         args.model.lower(),
@@ -876,7 +876,8 @@ if __name__ == "__main__":
         args.inner_steps,
         '' if args.no_preprocess else '_preproc',
         '_wave' if args.wave_pos_embed else '',
-        '_grads' if args.keep_grads else '')
+        '_grads' if args.keep_grads else '',
+        args.random_inner_steps_after,)
     print('save_dir: %s\n' % save_dir)
 
     if os.path.exists(os.path.join(save_dir, "step_999.pt")):
@@ -969,17 +970,6 @@ if __name__ == "__main__":
             model, hx, momentum = init_model(train_cfg, args)
             inner_steps_count = 0
         
-        # NOTE: ADDED BY US
-        # Add randomized inner steps after specified number of steps
-        if args.random_inner_steps_after > 0 and outer_steps_count >= args.random_inner_steps_after:
-            # Save the original inner_steps value for reference
-            if not hasattr(args, 'orig_inner_steps'):
-                args.orig_inner_steps = inner_steps
-                
-            # Randomly sample inner_steps value between min and max factors
-            factor = np.random.uniform(args.random_inner_steps_min, args.random_inner_steps_max)
-            inner_steps = max(1, int(args.orig_inner_steps * factor))
-            print(f"Randomized inner_steps: {inner_steps} (factor: {factor:.2f})")
 
 
         if inner_steps > args.truncate > 0 and (outer_steps_count + 1) % args.truncate == 0:
@@ -1020,8 +1010,22 @@ if __name__ == "__main__":
                     print('test_acc_/test_loss_', '= %.2f / %.3f' % test_model(model, device,
                                                                                testloader_mapping[train_cfg[
                                                                                    "dataset"]]()),
-                          'outer step={:03d}/{:03d}'.format(outer_steps_count + 1, args.steps))
+                          'outer step={:03d}/{:03d}'.format(outer_steps_count + 1, args.steps),
+                          "inner step={:03d}/{:03d}".format(inner_steps_count + 1, inner_steps))
                 scheduler.step()
+                # NOTE: ADDED BY US
+                # Add randomized inner steps after specified number of steps
+                if args.random_inner_steps_after > 0 and outer_steps_count >= args.random_inner_steps_after:
+                    # Save the original inner_steps value for reference
+                    if not hasattr(args, 'orig_inner_steps'):
+                        args.orig_inner_steps = inner_steps
+                        
+                    # Randomly sample inner_steps value between min and max factors
+                    factor = np.random.uniform(args.random_inner_steps_min, args.random_inner_steps_max)
+                    inner_steps = max(1, int(args.orig_inner_steps * factor))
+                    print(f"Randomized inner_steps: {inner_steps} (factor: {factor:.2f})")            
+                    inner_steps_count = 0  # Add this line
+
             model = None  # to reset the model/initial weights
             train_cfg = None  # to let choose random training tasks
 
