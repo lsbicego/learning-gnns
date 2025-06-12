@@ -6,8 +6,8 @@ Evaluation on CIFAR-10-conv (task 11, see l2o_utils.py) can be run as:
 """
 
 from functools import partial
-from l2o_utils import *
-from l2o_train2 import MetaOpt, eval_meta_opt, init_config, eval_meta_opt2
+from src.l2o.l2o_utils import *
+from src.l2o.l2o_train2 import MetaOpt, eval_meta_opt, init_config, eval_meta_opt2
 import csv
 import os
 import numpy as np
@@ -20,7 +20,7 @@ if __name__ == "__main__":
     parser.add_argument('--amp', action='store_true',
                         help='use automatic mixed precision for the metaopt step')
     args, device = init_config(parser, steps=1000, inner_steps=None)  # during eval, steps should equal inner_steps
-
+    name = args.ckpt.split('/')[-2] if args.ckpt else args.opt + "_" + str(args.lr) + '_' + str(args.wd)
     seed_everything(args.seed)
 
     train_cfg_ = TEST_TASKS[np.random.choice(args.train_tasks)]
@@ -70,8 +70,8 @@ if __name__ == "__main__":
     os.makedirs("eval_results", exist_ok=True)
 
     # <<< NEW: Prepare CSV for summary final accuracy results
-    summary_file = os.path.join("eval_results", "summary_results.csv")
-    with open(summary_file, mode='w', newline='') as f_summary:
+    summary_file = os.path.join("eval_results", f"summary_results_{args.train_tasks}_{name}.csv")
+    with open(summary_file, mode='w+', newline='') as f_summary:
         writer_summary = csv.writer(f_summary)
         writer_summary.writerow(['task_id', 'mean_acc', 'std_acc', 'final_accs_per_seed'])  # header
 
@@ -100,8 +100,8 @@ if __name__ == "__main__":
             writer_summary.writerow([task, mean_acc, std_acc, final_accs])
 
             # <<< NEW: Write per-iteration accuracy traces for this task into a CSV for plotting
-            curve_file = os.path.join("eval_results", f"curve_task{task}.csv")
-            with open(curve_file, mode='w', newline='') as f_curve:
+            curve_file = os.path.join("eval_results", f"curve_task_{args.train_tasks}_{name}.csv")
+            with open(curve_file, mode='w+', newline='') as f_curve:
                 writer_curve = csv.writer(f_curve)
                 # header: step + one column per seed
                 writer_curve.writerow(['step'] + [f'seed_{i}' for i in range(len(TEST_SEEDS))])
