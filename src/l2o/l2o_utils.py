@@ -627,7 +627,42 @@ TEST_TASKS = [
             "dataset": "imdb",
             "max_iters": 200,
             "name": "sentiment_analysis"
-        }
+        },
+       #19 hid_8
+        {
+            "net_args": {"in_channels": 3, "hid":8},
+            "net_cls": ConvNetCIFAR,
+            "dataset": "cifar10",
+            "max_iters": 400,
+            "name": "cifar_8_dim"
+        },
+        #20 hid_16
+        
+        {
+            "net_args": {"in_channels": 3, "hid":16},
+            "net_cls": ConvNetCIFAR,
+            "dataset": "cifar10",
+            "max_iters": 400,
+            "name": "cifar_16_dim"
+        },
+        #21 hid_64
+        
+        {
+            "net_args": {"in_channels": 3,"hid":64},
+            "net_cls": ConvNetCIFAR,
+            "dataset": "cifar10",
+            "max_iters": 400,
+            "name": "cifar_64_dim"
+        },
+
+        #22 hid_128
+        {
+            "net_args": {"in_channels": 3,"hid":128},
+            "net_cls": ConvNetCIFAR,
+            "dataset": "cifar10",
+            "max_iters": 400,
+            "name": "cifar_128_dim"
+        },
     ]
 
 TEST_SEEDS = [101, 102, 103, 104, 105]
