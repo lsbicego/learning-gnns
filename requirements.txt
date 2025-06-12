@@ -14,7 +14,7 @@ setuptools==78.1.1
 torch>=1.12.1
 torch_geometric==2.6.1
 torchdiffeq==0.2.5
-torchvision==0.13.1
+# torchvision==0.13.1
 tqdm==4.67.1
 wandb==0.19.11
 datasets
