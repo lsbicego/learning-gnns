@@ -663,6 +663,40 @@ TEST_TASKS = [
             "max_iters": 400,
             "name": "cifar_128_dim"
         },
+
+        #23 1 layer, hid_32
+        {
+            "net_args": {"in_channels": 3},
+            "net_cls": ConvNetCIFAR1,
+            "dataset": "cifar10",
+            "max_iters": 400,
+            "name": "convnet1_cifar10"
+        },
+
+        #24 2 layers, hid_32
+        {
+            "net_args": {"in_channels": 3},
+            "net_cls": ConvNetCIFAR2,
+            "dataset": "cifar10",
+            "max_iters": 400,
+            "name": "convnet2_cifar10"
+        },
+        #25 4 layers, hid_32
+        {
+            "net_args": {"in_channels": 3},
+            "net_cls": ConvNetCIFAR4,
+            "dataset": "cifar10",
+            "max_iters": 400,
+            "name": "convnet4_cifar10"
+        },
+        #26 5 layers, hid_32
+        {
+            "net_args": {"in_channels": 3},
+            "net_cls": ConvNetCIFAR5,
+            "dataset": "cifar10",
+            "max_iters": 400,
+            "name": "convnet5_cifar10"
+        },
     ]
 
 TEST_SEEDS = [101, 102, 103, 104, 105]
