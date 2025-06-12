@@ -292,6 +292,81 @@ class ConvNetCIFAR(nn.Module):
         return self.conv(x)
 
 
+
+
+class ConvNetCIFAR1(nn.Module):
+    def __init__(self, in_channels=3, ks=3, hid=32):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, hid, kernel_size=ks, stride=2),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(hid, 10)
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+class ConvNetCIFAR2(nn.Module):
+    def __init__(self, in_channels=3, ks=3, hid=32):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, hid, kernel_size=ks, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(hid, hid * 2, kernel_size=ks, stride=1, padding="same"),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(hid * 2, 10)
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+class ConvNetCIFAR4(nn.Module):
+    def __init__(self, in_channels=3, ks=3, hid=32):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, hid, kernel_size=ks, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(hid, hid * 2, kernel_size=ks, stride=1, padding="same"),
+            nn.ReLU(),
+            nn.Conv2d(hid * 2, hid * 2, kernel_size=ks, stride=1, padding="same"),
+            nn.ReLU(),
+            nn.Conv2d(hid * 2, hid * 4, kernel_size=ks, stride=1, padding="same"),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(hid * 4, 10)
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+class ConvNetCIFAR5(nn.Module):
+    def __init__(self, in_channels=3, ks=3, hid=32):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, hid, kernel_size=ks, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(hid, hid * 2, kernel_size=ks, stride=1, padding="same"),
+            nn.ReLU(),
+            nn.Conv2d(hid * 2, hid * 2, kernel_size=ks, stride=1, padding="same"),
+            nn.ReLU(),
+            nn.Conv2d(hid * 2, hid * 4, kernel_size=ks, stride=1, padding="same"),
+            nn.ReLU(),
+            nn.Conv2d(hid * 4, hid * 4, kernel_size=ks, stride=1, padding="same"),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(hid * 4, 10)
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+
 class NetMNIST(nn.Module):
     """
     Generic class to construct networks we want to optimize (2 layer MLP with 20 hidden units by default)
