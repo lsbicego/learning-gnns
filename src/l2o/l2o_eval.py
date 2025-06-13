@@ -24,7 +24,7 @@ if __name__ == "__main__":
     parser.add_argument('--amp', action='store_true',
                         help='use automatic mixed precision for the metaopt step')
     args, device = init_config(parser, steps=1000, inner_steps=None)  # during eval, steps should equal inner_steps
-    name = args.ckpt.split('/')[-2] if args.ckpt else args.opt + "_" + str(args.lr) + '_' + str(args.wd)
+    name = args.ckpt if args.ckpt else args.opt + "_" + str(args.lr) + '_' + str(args.wd)
     seed_everything(args.seed)
 
     train_cfg_ = TEST_TASKS[np.random.choice(args.train_tasks)]

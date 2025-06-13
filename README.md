@@ -6,16 +6,6 @@ A MetaOptimizer is a model that learns how to optimize another neural network --
 
 We first replicated existing experiments and then extended the experiments in two ways. (1) we propose a RecurrentGNN formulation for the L2O task and we train a model randomizing the number of inner training step. (2) We investigate the generalizability of learned optimizers, hypothesising that GNN-based methods do better compared to parameter-based methods when the testing loss landscape differs from the training loss landscape. 
 
-## Models & Results
-
-You can find our trained MetaOptimizers and evaluation logs in the following shared Google Drive folder:
-
-🔗 [Google Drive – Models & Results](https://drive.google.com/drive/folders/1MedQIxHGjN3e2YKap8DWmwigEWB8GvmU?usp=sharing)
-
-We include:
-- Model checkpoints
-- Evaluation accuracies
-
 ## Setup
 
 First, create an enviornment like so:
@@ -26,6 +16,18 @@ conda activate learning-gnns
 pip install -r requirements.txt
 pip install -e .
 ```
+
+## Models & Results
+
+You can find our trained MetaOptimizers and evaluation logs in the following shared Google Drive folder:
+
+🔗 [Google Drive – Models & Results](https://drive.google.com/drive/folders/1MedQIxHGjN3e2YKap8DWmwigEWB8GvmU?usp=sharing)
+
+We include:
+- Model checkpoints
+- Evaluation accuracies
+
+If you'd like to replicate our plots, download the evaluation accuracies folder, place it in the root of the project and run the `analyse_plot_results.ipynb` notebook (adjust the path in the first cell). If you'd like to evaluate one of our models yourself, download the .pt file from the drive, and follow the instructions for evaluation below.
 
 ## Experiments
 
