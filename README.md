@@ -88,6 +88,13 @@ Changing the network depth:
 - **Task 26**: CNN with 5 convolutional layers (maximum depth)
 
 ## Code Structure
+
+- l2o/: Learning-to-Optimize implementation with training and evaluation scripts
+- nfn/: Neural Graph models and utilities
+- nn/: Core neural network implementations including GNN models
+
+Training is done using l2o_train.py, while evaluation is performed with l2o_eval.py. All plots are created in the `analyse_plot_results.ipynb` notebook.
+
 ```bash
 src/
 ├── l2o/
@@ -103,12 +110,6 @@ src/
     ├── rt_transformer.py  # Routing Transformer implementation
     └── transformer_head.py # Transformer attention mechanisms
 ```
-
-- l2o/: Learning-to-Optimize implementation with training and evaluation scripts
-- nfn/: Neural Graph models and utilities
-- nn/: Core neural network implementations including GNN models
-
-Training is done using l2o_train.py, while evaluation is performed with l2o_eval.py.
 
 ## Attribution
 The code is adapted & cleaned from the repository shared on [Openreview](https://openreview.net/forum?id=oO6FsMyDBt). The official repository shared in the main paper does not yet include L2O experiments!
