@@ -1,3 +1,8 @@
+"""
+This module provides utilities, model definitions, dataset loaders, and testing routines for training and evaluating deep learning models.
+These models will be used to both train and test our meta-optimizer.
+"""
+
 import os
 import argparse
 import numpy as np

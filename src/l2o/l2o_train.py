@@ -1,28 +1,13 @@
 """
+This script trains a Meta-Optimizer (MetaOpt) on optimizing an optimizee model for tasks defined in l2o_utils.py (e.g. FashionMNIST-conv).
+Checkpointing and performance-based best model saving included.
 
-export PYTHONPATH=$PYTHONPATH:~/projects/INR  # add INR to PYTHONPATH
+Usage:
+    python -m src.l2o.l2o_train --train_tasks <task_id> --gnn <model_type_choice> <model_architecture_hyperparameters>
 
-Training the baselines, PNA and RT models on FashionMNIST-conv (task 17, see l2o_utils.py).
-The hyperparameters (hid, layers, etc) are set based on the best performance on FashionMNIST-conv.
-
-1. Baseline (FF):
-    python experiments/mnist/l2o_train.py --train_tasks 17 --gnn scale --hid 64 --layers 2;
-
-2. Baseline (LSTM-FF):
-    python experiments/mnist/l2o_train.py --train_tasks 17 --gnn lstm --hid 32 --layers 1;
-
-3. PNA-FF:
-    python experiments/mnist/l2o_train.py --train_tasks 17 --gnn pna_noscale --hid 64 --layers 8 --wave_pos_embed;
-
-4. RT-FF:
-    python experiments/mnist/l2o_train.py --train_tasks 17 --gnn rt_noscale --hid 32 --layers 2 --wave_pos_embed;
-
-Evaluation on CIFAR-10-conv (task 11, see l2o_utils.py) can be run as:
-    python experiments/mnist/l2o_eval.py --ckpt results/l2o_fashionmnist17_.../step_xx.pt --train_tasks 11
-
-- l2o_fashionmnist17_... is the directory of the checkpoint from the training above;
-- xx is the step number, chosen based on the performance (test_acc) on FashionMNIST-conv.
-
+Output:
+- Trained MetaOpt checkpoint every 100 steps
+- Best model (highest test acc) saved to "best_model.pt"
 """
 
 import os
@@ -542,6 +527,164 @@ def eval_meta_opt(meta_opt, test_cfg, seed, args, device, print_interval=20, ste
     train_loader = trainloader_mapping[test_cfg["dataset"]]()
     epochs = int(np.ceil(max_iters / len(train_loader)))
     step = 0
+    acc_trace = []  # <<< NEW: list to store test acc over time
+    for epoch in range(epochs):
+        for _, (x, y) in enumerate(train_loader):
+            # net.zero_grad()  # not needed since grads are detached in set_model_params in the next lines
+            output = net(x.to(device))
+            y = y.to(device)
+            loss = F.cross_entropy(output, y)
+
+            loss.backward(retain_graph=args.keep_grads)
+
+            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            acc = pred.eq(y.view_as(pred)).sum() / len(y)
+
+            if isinstance(meta_opt, nn.Module):
+                with torch.set_grad_enabled(args.keep_grads):
+                    with torch.amp.autocast(enabled=amp, device_type=device):  # use amp to reduce memory usage
+                        predicted_upd, hx_, momentum_ = meta_opt(net, hx=hx_, momentum=momentum_)
+                    set_model_params(net, predicted_upd, keep_grad=args.keep_grads, retain_graph=args.keep_grads)
+
+            else:
+                # SGD, Adam, AdamW, etc.
+                meta_opt.step()
+                meta_opt.zero_grad()
+
+            if (step + 1) % min(100, args.inner_steps) == 0 and step < max_iters - 1:
+                test_acc_, test_loss_ = test_model(net, device, testloader_mapping[test_cfg["dataset"]]())
+                acc_trace.append(test_acc_)  # <<< NEW: save test acc
+                print('test_acc_/test_loss_', test_acc_, test_loss_)
+
+                # reset hidden states and momentum (but not the model/net) to align with the training regime
+                # not sure it is needed in the current version, but was important in some preliminary experiments
+                # Observation: interestingly, this reset does not change the results significantly
+                if (step + 1) % args.inner_steps == 0:
+                    net, hx_, momentum_ = init_model(test_cfg, args, net)
+
+            if (step + 1) % print_interval == 0 or step == max_iters - 1:
+                r = process.memory_info().rss / 10 ** 9
+                g = -1 if device == 'cpu' else (torch.cuda.memory_reserved(0) / 10 ** 9)
+                print('Training {} net: seed={}, step={:05d}/{:05d}, train loss={:.3f}, acc={:.3f}, '
+                      'speed: {:.2f} s/b, mem ram/gpu: {:.2f}/{:.2f}G'.format(test_cfg['name'],
+                                                                              seed,
+                                                                              step + 1,
+                                                                              max_iters,
+                                                                              loss.item(),
+                                                                              acc.item(),
+                                                                              (time.time() - t) / (step + 1),
+                                                                              r,
+                                                                              g))
+            step += 1
+            if step >= max_iters:
+                break
+        if step >= max_iters:
+            break
+
+    test_acc_, test_loss_ = test_model(net, device, testloader_mapping[test_cfg["dataset"]]())
+    print("seed: {}, test accuracy: {:.2f}, test loss: {:.4f}\n".format(seed,
+                                                                        test_acc_,
+                                                                        test_loss_))
+
+    return acc_trace
+
+def eval_meta_opt2(meta_opt, test_cfg, seed, args, device, print_interval=20, steps=None, amp=False):
+    seed_everything(seed)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    net, hx_, momentum_ = init_model(test_cfg, args)
+    if isinstance(meta_opt, nn.Module):
+        meta_opt.eval()
+    else:
+        net.train()
+        meta_opt = meta_opt(net.parameters())
+
+    t = time.time()
+    max_iters = test_cfg['max_iters'] if steps is None else steps
+    train_loader = trainloader_mapping[test_cfg["dataset"]]()
+    epochs = int(np.ceil(max_iters / len(train_loader)))
+    step = 0
+    acc_trace = []  # <<< NEW: list to store test accuracy over time
+
+    for epoch in range(epochs):
+        for _, batch in enumerate(train_loader):
+            if isinstance(batch, dict):
+                x = batch['input_ids']
+                y = batch['labels']
+                output = net(x.to(device))
+                y = y.to(device)
+                loss = F.binary_cross_entropy(output, y.float())
+                acc = ((output > 0.5) == y.bool()).float().mean()
+            else:
+                x, y = batch
+                output = net(x.to(device))
+                y = y.to(device)
+                loss = F.cross_entropy(output, y)
+                pred = output.argmax(dim=1, keepdim=True)
+                acc = pred.eq(y.view_as(pred)).sum() / len(y)
+
+            loss.backward(retain_graph=args.keep_grads)
+
+            if isinstance(meta_opt, nn.Module):
+                with torch.set_grad_enabled(args.keep_grads):
+                    with torch.amp.autocast(enabled=amp, device_type=device):
+                        predicted_upd, hx_, momentum_ = meta_opt(net, hx=hx_, momentum=momentum_)
+                    set_model_params(net, predicted_upd, keep_grad=args.keep_grads, retain_graph=args.keep_grads)
+            else:
+                meta_opt.step()
+                meta_opt.zero_grad()
+
+            step += 1  # increment step after optimizer step
+
+            # <<< NEW: Collect test accuracy every print_interval steps (and at final step)
+            if (step) % print_interval == 0 or step == max_iters:
+                test_acc_, test_loss_ = test_model(net, device, testloader_mapping[test_cfg["dataset"]]())
+                acc_trace.append(test_acc_)
+                print(f'test_acc_/test_loss_ {test_acc_}, {test_loss_}')
+
+                # Reset hidden states and momentum if needed
+                if step % args.inner_steps == 0:
+                    net, hx_, momentum_ = init_model(test_cfg, args, net)
+
+                # Print memory and progress info (already had this)
+                r = process.memory_info().rss / 10 ** 9
+                g = -1 if device == 'cpu' else (torch.cuda.memory_reserved(0) / 10 ** 9)
+                print('Training {} net: seed={}, step={:05d}/{:05d}, train loss={:.3f}, acc={:.3f}, '
+                      'speed: {:.2f} s/b, mem ram/gpu: {:.2f}/{:.2f}G'.format(
+                    test_cfg['name'], seed, step, max_iters, loss.item(), acc.item(), (time.time() - t) / step, r, g))
+
+            if step >= max_iters:
+                break
+        if step >= max_iters:
+            break
+
+    # Final test accuracy after all steps
+    test_acc_, test_loss_ = test_model(net, device, testloader_mapping[test_cfg["dataset"]]())
+    print(f"seed: {seed}, test accuracy: {test_acc_:.2f}, test loss: {test_loss_:.4f}\n")
+
+    return acc_trace
+
+
+
+def eval_meta_opt_last_only(meta_opt, test_cfg, seed, args, device, print_interval=20, steps=None, amp=False):
+    seed_everything(seed)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    net, hx_, momentum_ = init_model(test_cfg, args)
+    if isinstance(meta_opt, nn.Module):
+        meta_opt.eval()
+    else:
+        # SGD, Adam, AdamW, etc.
+        net.train()
+        meta_opt = meta_opt(net.parameters())
+
+    t = time.time()
+    max_iters = test_cfg['max_iters'] if steps is None else steps
+    train_loader = trainloader_mapping[test_cfg["dataset"]]()
+    epochs = int(np.ceil(max_iters / len(train_loader)))
+    step = 0
     for epoch in range(epochs):
         for _, (x, y) in enumerate(train_loader):
             # net.zero_grad()  # not needed since grads are detached in set_model_params in the next lines
@@ -600,6 +743,7 @@ def eval_meta_opt(meta_opt, test_cfg, seed, args, device, print_interval=20, ste
                                                                         test_loss_))
 
     return test_acc_
+
 
 
 def init_config(parser, steps=1000, inner_steps=None, log_interval=1):
@@ -702,7 +846,7 @@ if __name__ == "__main__":
     args, device = init_config(parser, steps=1000, inner_steps=100, log_interval=100)
 
     rnn = args.model.lower() == 'lstm'
-    save_dir = 'results/l2o_{}{}_{}{}_{}_lr{:.6f}_wd{:.6f}_mom{:.2f}_hid{}_layers{}_iters{}_innersteps{}{}{}{}'.format(
+    save_dir = 'results/l2o_{}{}_{}{}_{}_lr{:.6f}_wd{:.6f}_mom{:.2f}_hid{}_layers{}_iters{}_innersteps{}{}{}{}randomsteps{}'.format(
         TEST_TASKS[args.train_tasks[0]]["dataset"],
         args.train_tasks[0],
         args.model.lower(),
@@ -717,7 +861,8 @@ if __name__ == "__main__":
         args.inner_steps,
         '' if args.no_preprocess else '_preproc',
         '_wave' if args.wave_pos_embed else '',
-        '_grads' if args.keep_grads else '')
+        '_grads' if args.keep_grads else '',
+        args.random_inner_steps_after,)
     print('save_dir: %s\n' % save_dir)
 
     if os.path.exists(os.path.join(save_dir, "step_999.pt")):
@@ -810,17 +955,6 @@ if __name__ == "__main__":
             model, hx, momentum = init_model(train_cfg, args)
             inner_steps_count = 0
         
-        # NOTE: ADDED BY US
-        # Add randomized inner steps after specified number of steps
-        if args.random_inner_steps_after > 0 and outer_steps_count >= args.random_inner_steps_after:
-            # Save the original inner_steps value for reference
-            if not hasattr(args, 'orig_inner_steps'):
-                args.orig_inner_steps = inner_steps
-                
-            # Randomly sample inner_steps value between min and max factors
-            factor = np.random.uniform(args.random_inner_steps_min, args.random_inner_steps_max)
-            inner_steps = max(1, int(args.orig_inner_steps * factor))
-            print(f"Randomized inner_steps: {inner_steps} (factor: {factor:.2f})")
 
 
         if inner_steps > args.truncate > 0 and (outer_steps_count + 1) % args.truncate == 0:
@@ -858,12 +992,25 @@ if __name__ == "__main__":
                 outer_upd = True
                 # can test meta-optimized network for sanity check
                 if data is not None:
-                    test_acc, test_loss = test_model(model, device,
-                                                        testloader_mapping[train_cfg[
-                                                            "dataset"]]())
-                    print('test_acc_/test_loss_', '= {:.2f} / {:.3f}'.format(test_acc, test_loss),
-                          'outer step={:03d}/{:03d}'.format(outer_steps_count + 1, args.steps))
+                    print('test_acc_/test_loss_', '= %.2f / %.3f' % test_model(model, device,
+                                                                               testloader_mapping[train_cfg[
+                                                                                   "dataset"]]()),
+                          'outer step={:03d}/{:03d}'.format(outer_steps_count + 1, args.steps),
+                          "inner step={:03d}/{:03d}".format(inner_steps_count + 1, inner_steps))
                 scheduler.step()
+                # NOTE: ADDED BY US
+                # Add randomized inner steps after specified number of steps
+                if args.random_inner_steps_after > 0 and outer_steps_count >= args.random_inner_steps_after:
+                    # Save the original inner_steps value for reference
+                    if not hasattr(args, 'orig_inner_steps'):
+                        args.orig_inner_steps = inner_steps
+                        
+                    # Randomly sample inner_steps value between min and max factors
+                    factor = np.random.uniform(args.random_inner_steps_min, args.random_inner_steps_max)
+                    inner_steps = max(1, int(args.orig_inner_steps * factor))
+                    print(f"Randomized inner_steps: {inner_steps} (factor: {factor:.2f})")            
+                    inner_steps_count = 0  # Add this line
+
             model = None  # to reset the model/initial weights
             train_cfg = None  # to let choose random training tasks
 
@@ -913,8 +1060,8 @@ if __name__ == "__main__":
 
             if data is not None:
                 print('\nEval MetaOpt, task:', TEST_TASKS[args.train_tasks[0]])
-                final_test_acc = eval_meta_opt(metaopt, TEST_TASKS[args.train_tasks[0]], TEST_SEEDS[0], args, device, print_interval=1)
-                if final_test_acc > best_test_acc:
+                final_test_acc = eval_meta_opt_last_only(metaopt, TEST_TASKS[args.train_tasks[0]], TEST_SEEDS[0], args, device, print_interval=1)
+                if final_test_acc > best_test_acc: # compare last test accuracy
                     best_test_acc = final_test_acc
                     print('Best test accuracy so far: {:.2f}'.format(best_test_acc))
                     # Save the best model
