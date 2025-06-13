@@ -21,10 +21,10 @@ We include:
 First, create an enviornment like so:
 
 ```bash
-conda create -n opt-project python=3.10
-conda activate opt-project
+conda create -n learning-gnns python=3.10
+conda activate learning-gnns
 pip install -r requirements.txt
-pip install -e . # to install src package for easier imports
+pip install -e .
 ```
 
 ## Experiments
