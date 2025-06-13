@@ -11,7 +11,7 @@ Usage:
 
 from functools import partial
 from src.l2o.l2o_utils import *
-from src.l2o.l2o_train2 import MetaOpt, eval_meta_opt, init_config, eval_meta_opt2
+from src.l2o.l2o_train import MetaOpt, eval_meta_opt, init_config, eval_meta_opt2
 import csv
 import os
 import numpy as np
@@ -48,7 +48,7 @@ if __name__ == "__main__":
         print(f'Using {args.opt}')
 
     else:
-        state_dict = torch.load(args.ckpt, map_location=device)
+        state_dict = torch.load(args.ckpt, map_location=device, weights_only=False)
         if 'metaopt_cfg' in state_dict:
             metaopt_cfg = state_dict['metaopt_cfg']
             metaopt_cfg['layer_layout'] = layer_layout

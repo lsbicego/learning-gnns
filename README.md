@@ -1,6 +1,3 @@
-# TODO:
-remove train2 and eval2 (i.e., switch names)
-
 # Learning to Optimize with GNNs 
 
 In our project, we extended the implementation and added various experiments around "Neural Graphs" [Kofinas et al. (2024)](https://arxiv.org/abs/2403.12143) for Learning to Optimize. 
